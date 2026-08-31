@@ -81,7 +81,6 @@ qualityCertificateSchema.index({
   testDate: -1,
 });
 
-module.exports = mongoose.model(
-  "QualityCertificate",
-  qualityCertificateSchema
-);
+module.exports =
+  mongoose.models.QualityCertificate ||
+  mongoose.model("QualityCertificate", qualityCertificateSchema);

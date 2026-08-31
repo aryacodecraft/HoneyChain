@@ -1,210 +1,232 @@
 const HoneyBatch = require("../models/HoneyBatch");
 const ProcessingRecord = require("../models/ProcessingRecord");
-const BlockchainRecord = require("../models/BlockchainRecord");
-const Alert = require("../models/Alert");
-const {
-  processBatch,
-  approveBatch,
-  flagBatch,
-} = require("../../Blockchain/backend/blockchain");
+const QualityCertificate = require("../models/QualityCertificate");
 
-// ─── Process Batch ────────────────────────────────────────────────────────────
-// POST /api/batches/:batchId/process
-const processBatchController = async (req, res) => {
+// ========================================
+// Get Batches Available for Processing
+// ========================================
+
+const getProcessingBatches = async (req, res, next) => {
   try {
-    const { batchId } = req.params;
+    const batches = await HoneyBatch.find({
+      status: {
+        $in: ["created", "processing", "packaged"],
+      },
+    })
+      .populate(
+        "hiveId",
+        "hiveId beeSpecies floralSource location"
+      )
+      .populate(
+        "beekeeperId",
+        "name location"
+      )
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: batches.length,
+      data: batches,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ========================================
+// Get Processing History
+// ========================================
+
+const getProcessingHistory = async (req, res, next) => {
+  try {
+    const records = await ProcessingRecord.find({
+      processorId: req.user._id,
+    })
+      .populate(
+        "batchId",
+        "batchId quantity status riskLevel trustScore"
+      )
+      .sort({ processingDate: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: records.length,
+      data: records,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ========================================
+// Add Quality Certificate
+// ========================================
+
+const addQualityCertificate = async (req, res, next) => {
+  try {
     const {
-      receivedQuantity,
-      processedQuantity,
-      processingDate,
-      processingUnit,
-      packagingDate,
-      packageCount,
+      certificateId,
+      testDate,
+      labName,
+      moisture,
+      purity,
+      adulterationStatus,
+      result,
+      remarks,
+      certificateUrl,
     } = req.body;
 
-    const honeyBatch = await HoneyBatch.findOne({ batchId });
-    if (!honeyBatch) {
-      return res.status(404).json({ success: false, error: "Batch not found" });
-    }
-
-    const processingData = {
-      batchId,
-      processorId: req.user.id,
-      receivedQuantity,
-      processedQuantity,
-      processingDate,
-      processingUnit,
-      packagingDate,
-      packageCount,
-      timestamp: new Date().toISOString(),
-    };
-
-    // Call blockchain
-    const blockchainResult = await processBatch(batchId, processingData);
-
-    // Save processing record to MongoDB
-    const processingRecord = await ProcessingRecord.create({
-      batchId: honeyBatch._id,
-      processorId: req.user.id,
-      receivedQuantity,
-      processedQuantity,
-      processingDate,
-      processingUnit,
-      packagingDate,
-      packageCount,
-      status: "completed",
-      txHash: blockchainResult.txHash,
-      blockNumber: blockchainResult.blockNumber,
-      ipfsCID: blockchainResult.ipfsCID,
-    });
-
-    // Check for quantity mismatch — flag if >10% difference
-    const originalQty = honeyBatch.quantity.value;
-    const difference = Math.abs(originalQty - receivedQuantity) / originalQty;
-    let quantityMismatch = false;
-
-    if (difference > 0.1) {
-      quantityMismatch = true;
-      await Alert.create({
-        batchId: honeyBatch._id,
-        type: "quantity_mismatch",
-        severity: difference > 0.2 ? "high" : "medium",
-        title: "Quantity mismatch detected",
-        message: `Expected ${originalQty} kg but processor reported ${receivedQuantity} kg.`,
-        riskScore: Math.round(difference * 100),
-        status: "open",
+    if (
+      !certificateId ||
+      !testDate ||
+      !labName ||
+      !adulterationStatus
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Certificate ID, test date, lab name and adulteration status are required.",
       });
     }
 
-    // Update batch status
-    honeyBatch.status = "processing";
-    await honeyBatch.save();
+    const batch = await HoneyBatch.findById(req.params.id);
 
-    // Save blockchain record
-    await BlockchainRecord.create({
-      batchId: honeyBatch._id,
-      transactionType: "processing_updated",
-      transactionHash: blockchainResult.txHash,
-      blockNumber: blockchainResult.blockNumber,
-      dataHash: blockchainResult.ipfsCID,
-      blockchainNetwork: "Sepolia Testnet",
-      status: "confirmed",
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found.",
+      });
+    }
+
+    // Certificate IDs must be unique
+    const existingCertificate =
+      await QualityCertificate.findOne({
+        certificateId,
+      });
+
+    if (existingCertificate) {
+      return res.status(409).json({
+        success: false,
+        message: "Certificate ID already exists.",
+      });
+    }
+
+    const certificate = await QualityCertificate.create({
+      batchId: batch._id,
+      certificateId,
+      testDate,
+      labName,
+      moisture,
+      purity,
+      adulterationStatus,
+      result: result || "pending",
+      status:
+        result === "pass"
+          ? "verified"
+          : result === "fail"
+          ? "rejected"
+          : "unverified",
+      verifiedBy: req.user._id,
+      certificateUrl,
+      remarks,
     });
 
-    res.json({
+    // Update batch based on quality result
+    if (result === "fail" || adulterationStatus === "detected") {
+      batch.status = "flagged";
+      batch.riskLevel = "high";
+      batch.trustScore = Math.min(
+        batch.trustScore || 100,
+        20
+      );
+
+      await batch.save();
+    }
+
+    if (
+      result === "pass" &&
+      adulterationStatus === "not_detected" &&
+      batch.status !== "flagged"
+    ) {
+      batch.riskLevel = "low";
+      batch.trustScore = Math.max(
+        batch.trustScore || 0,
+        90
+      );
+
+      await batch.save();
+    }
+
+    res.status(201).json({
       success: true,
-      message: "Batch processing recorded on blockchain",
+      message: "Quality certificate added successfully.",
       data: {
-        batchId,
-        status: "processing",
-        quantityMismatch,
-        txHash: blockchainResult.txHash,
-        blockNumber: blockchainResult.blockNumber,
-        etherscan: `https://sepolia.etherscan.io/tx/${blockchainResult.txHash}`,
+        certificate,
+        batch,
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    next(error);
   }
 };
 
-// ─── Approve Batch ────────────────────────────────────────────────────────────
-// POST /api/batches/:batchId/approve
-const approveBatchController = async (req, res) => {
-  try {
-    const { batchId } = req.params;
+// ========================================
+// Get Batch Processing Details
+// ========================================
 
-    const honeyBatch = await HoneyBatch.findOne({ batchId });
-    if (!honeyBatch) {
-      return res.status(404).json({ success: false, error: "Batch not found" });
+const getBatchProcessingDetails = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const batch = await HoneyBatch.findById(req.params.id)
+      .populate(
+        "hiveId",
+        "hiveId beeSpecies floralSource location"
+      )
+      .populate(
+        "beekeeperId",
+        "name email location"
+      );
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found.",
+      });
     }
 
-    const blockchainResult = await approveBatch(batchId);
+    const processingRecords =
+      await ProcessingRecord.find({
+        batchId: batch._id,
+      })
+        .populate("processorId", "name email")
+        .sort({ processingDate: -1 });
 
-    honeyBatch.status = "packaged";
-    await honeyBatch.save();
+    const certificates =
+      await QualityCertificate.find({
+        batchId: batch._id,
+      })
+        .populate("verifiedBy", "name email")
+        .sort({ testDate: -1 });
 
-    await BlockchainRecord.create({
-      batchId: honeyBatch._id,
-      transactionType: "batch_approved",
-      transactionHash: blockchainResult.txHash,
-      blockNumber: blockchainResult.blockNumber,
-      dataHash: honeyBatch.ipfsCID,
-      blockchainNetwork: "Sepolia Testnet",
-      status: "confirmed",
-    });
-
-    res.json({
+    res.status(200).json({
       success: true,
-      message: "Batch approved on blockchain",
       data: {
-        batchId,
-        status: "packaged",
-        txHash: blockchainResult.txHash,
-        blockNumber: blockchainResult.blockNumber,
-        etherscan: `https://sepolia.etherscan.io/tx/${blockchainResult.txHash}`,
+        batch,
+        processingRecords,
+        certificates,
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-// ─── Flag Batch ───────────────────────────────────────────────────────────────
-// POST /api/batches/:batchId/flag
-const flagBatchController = async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    const { reason } = req.body;
-
-    const honeyBatch = await HoneyBatch.findOne({ batchId });
-    if (!honeyBatch) {
-      return res.status(404).json({ success: false, error: "Batch not found" });
-    }
-
-    const blockchainResult = await flagBatch(batchId, reason);
-
-    honeyBatch.status = "flagged";
-    await honeyBatch.save();
-
-    await BlockchainRecord.create({
-      batchId: honeyBatch._id,
-      transactionType: "batch_flagged",
-      transactionHash: blockchainResult.txHash,
-      blockNumber: blockchainResult.blockNumber,
-      dataHash: honeyBatch.ipfsCID,
-      blockchainNetwork: "Sepolia Testnet",
-      status: "confirmed",
-    });
-
-    await Alert.create({
-      batchId: honeyBatch._id,
-      type: "suspicious_activity",
-      severity: "high",
-      title: "Batch flagged for adulteration",
-      message: reason,
-      status: "open",
-    });
-
-    res.json({
-      success: true,
-      message: "Batch flagged on blockchain",
-      data: {
-        batchId,
-        status: "flagged",
-        reason,
-        txHash: blockchainResult.txHash,
-        blockNumber: blockchainResult.blockNumber,
-        etherscan: `https://sepolia.etherscan.io/tx/${blockchainResult.txHash}`,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    next(error);
   }
 };
 
 module.exports = {
-  processBatchController,
-  approveBatchController,
-  flagBatchController,
+  getProcessingBatches,
+  getProcessingHistory,
+  addQualityCertificate,
+  getBatchProcessingDetails,
 };

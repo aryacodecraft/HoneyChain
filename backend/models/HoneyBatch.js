@@ -1,34 +1,72 @@
 const mongoose = require("mongoose");
-
-// Central traceability entity — matches schema exactly
 const honeyBatchSchema = new mongoose.Schema(
   {
-    batchId: { type: String, required: true, unique: true }, // e.g. "HC-2026-001"
+    batchId: {
+      type: String,
+      required: [true, "Batch ID is required"],
+      unique: true,
+      trim: true,
+    },
+
     hiveId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Hive",
-      required: true,
+      required: [true, "Hive ID is required"],
     },
+
     beekeeperId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: [true, "Beekeeper ID is required"],
     },
-    floralSource: { type: String },
-    harvestDate: { type: Date, required: true },
+
+    floralSource: {
+      type: String,
+      trim: true,
+    },
+
+    harvestDate: {
+      type: Date,
+      required: [true, "Harvest date is required"],
+    },
+
     harvestLocation: {
-      latitude: { type: Number },
-      longitude: { type: Number },
-      state: { type: String, required: true },
-      district: { type: String },
+      latitude: {
+        type: Number,
+      },
+
+      longitude: {
+        type: Number,
+      },
+
+      state: {
+        type: String,
+        required: [true, "Harvest state is required"],
+        trim: true,
+      },
+
+      district: {
+        type: String,
+        trim: true,
+      },
     },
+
     quantity: {
-      value: { type: Number, required: true },
-      unit: { type: String, default: "kg" },
+      value: {
+        type: Number,
+        required: [true, "Honey quantity is required"],
+        min: [0, "Quantity cannot be negative"],
+      },
+
+      unit: {
+        type: String,
+        default: "kg",
+        trim: true,
+      },
     },
+
     status: {
       type: String,
-      required: true,
       enum: [
         "created",
         "processing",
@@ -40,28 +78,52 @@ const honeyBatchSchema = new mongoose.Schema(
       ],
       default: "created",
     },
+
     riskLevel: {
       type: String,
       enum: ["low", "medium", "high"],
       default: "low",
     },
-    trustScore: { type: Number, min: 0, max: 100 },
 
-    // QR code identifier
-    qrCode: { type: String },          // QR identifier e.g. "QR-HC-2026-001"
-    qrCodeImage: { type: String },     // base64 QR image for display
+    trustScore: {
+      type: Number,
+      min: 0,
+      max: 100,
+    },
 
-    // Blockchain + IPFS references
-    ipfsCID: { type: String },
-    txHash: { type: String },
-    blockNumber: { type: Number },
+    // QR information
+    qrCode: {
+      type: String,
+      trim: true,
+    },
+
+    qrCodeImage: {
+      type: String,
+    },
+
+    // Reserved for future blockchain/IPFS integration.
+    // The backend does not depend on these fields.
+    ipfsCID: {
+      type: String,
+    },
+
+    txHash: {
+      type: String,
+    },
+
+    blockNumber: {
+      type: Number,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-// Indexes from schema
-honeyBatchSchema.index({ batchId: 1 }, { unique: true });
+// Indexes
 honeyBatchSchema.index({ beekeeperId: 1 });
+honeyBatchSchema.index({ hiveId: 1 });
 honeyBatchSchema.index({ status: 1 });
+honeyBatchSchema.index({ batchId: 1 }, { unique: true });
 
 module.exports = mongoose.model("HoneyBatch", honeyBatchSchema);

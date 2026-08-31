@@ -1,77 +1,164 @@
 const HoneyBatch = require("../models/HoneyBatch");
 const LocationLog = require("../models/LocationLog");
-const BlockchainRecord = require("../models/BlockchainRecord");
-const { markDelivered } = require("../../Blockchain/backend/blockchain");
 
-// ─── Mark Delivered ───────────────────────────────────────────────────────────
-// POST /api/batches/:batchId/deliver
-const markDeliveredController = async (req, res) => {
+// ========================================
+// Get Batches Arriving at Retail
+// ========================================
+
+const getRetailBatches = async (req, res, next) => {
   try {
-    const { batchId } = req.params;
+    const batches = await HoneyBatch.find({
+      status: {
+        $in: ["in_transit", "retail"],
+      },
+    })
+      .populate(
+        "hiveId",
+        "hiveId beeSpecies floralSource location"
+      )
+      .populate(
+        "beekeeperId",
+        "name location"
+      )
+      .sort({ updatedAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: batches.length,
+      data: batches,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ========================================
+// Get Retailer's Received Batches
+// ========================================
+
+const getReceivedBatches = async (req, res, next) => {
+  try {
+    const logs = await LocationLog.find({
+      updatedBy: req.user._id,
+      eventType: "arrived",
+    })
+      .populate(
+        "batchId",
+        "batchId quantity status riskLevel trustScore"
+      )
+      .sort({ timestamp: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: logs.length,
+      data: logs,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ========================================
+// Receive Batch
+// ========================================
+
+const receiveBatch = async (req, res, next) => {
+  try {
     const { location } = req.body;
 
-    const honeyBatch = await HoneyBatch.findOne({ batchId });
-    if (!honeyBatch) {
-      return res.status(404).json({ success: false, error: "Batch not found" });
+    const batch = await HoneyBatch.findById(req.params.id);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found.",
+      });
     }
 
-    const blockchainResult = await markDelivered(batchId);
+    if (batch.status === "flagged") {
+      return res.status(400).json({
+        success: false,
+        message: "Flagged batches cannot be received.",
+      });
+    }
 
-    // Log final arrival location
-    await LocationLog.create({
-      batchId: honeyBatch._id,
-      updatedBy: req.user.id,
+    if (batch.status !== "in_transit") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Only batches currently in transit can be received.",
+      });
+    }
+
+    const locationLog = await LocationLog.create({
+      batchId: batch._id,
+      updatedBy: req.user._id,
       actorRole: "retailer",
       location,
       eventType: "arrived",
-      txHash: blockchainResult.txHash,
-      timestamp: new Date(),
     });
 
-    honeyBatch.status = "retail";
-    await honeyBatch.save();
+    batch.status = "retail";
 
-    await BlockchainRecord.create({
-      batchId: honeyBatch._id,
-      transactionType: "batch_delivered",
-      transactionHash: blockchainResult.txHash,
-      blockNumber: blockchainResult.blockNumber,
-      dataHash: honeyBatch.ipfsCID,
-      blockchainNetwork: "Sepolia Testnet",
-      status: "confirmed",
-    });
+    await batch.save();
 
-    res.json({
+    res.status(200).json({
       success: true,
-      message: "Batch marked as delivered on blockchain",
+      message: "Batch received successfully.",
       data: {
-        batchId,
-        status: "retail",
-        txHash: blockchainResult.txHash,
-        blockNumber: blockchainResult.blockNumber,
-        etherscan: `https://sepolia.etherscan.io/tx/${blockchainResult.txHash}`,
+        batch,
+        locationLog,
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    next(error);
   }
 };
 
-// ─── Get Batch QR ─────────────────────────────────────────────────────────────
-// GET /api/batches/:batchId/qr
-const getBatchQR = async (req, res) => {
+// ========================================
+// Get Retail Batch Details
+// ========================================
+
+const getRetailBatchDetails = async (req, res, next) => {
   try {
-    const honeyBatch = await HoneyBatch.findOne({ batchId: req.params.batchId });
-    if (!honeyBatch) {
-      return res.status(404).json({ success: false, error: "Batch not found" });
+    const batch = await HoneyBatch.findById(req.params.id)
+      .populate(
+        "hiveId",
+        "hiveId beeSpecies floralSource location"
+      )
+      .populate(
+        "beekeeperId",
+        "name location"
+      );
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found.",
+      });
     }
-    res.json({
+
+    const journey = await LocationLog.find({
+      batchId: batch._id,
+    })
+      .populate("updatedBy", "name role")
+      .sort({ timestamp: 1 });
+
+    res.status(200).json({
       success: true,
-      data: { batchId: honeyBatch.batchId, qrCode: honeyBatch.qrCodeImage },
+      data: {
+        batch,
+        journey,
+      },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    next(error);
   }
 };
 
-module.exports = { markDeliveredController, getBatchQR };
+module.exports = {
+  getRetailBatches,
+  getReceivedBatches,
+  receiveBatch,
+  getRetailBatchDetails,
+};
