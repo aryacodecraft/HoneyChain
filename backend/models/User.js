@@ -3,38 +3,79 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    passwordHash: { type: String, required: true },
+    name: {
+      type: String,
+      required: [true, "Name is required"],
+      trim: true,
+    },
+
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    passwordHash: {
+      type: String,
+      required: [true, "Password is required"],
+      minlength: 6,
+    },
+
     role: {
       type: String,
       required: true,
-      enum: ["beekeeper", "processor", "admin", "distributor", "retailer"],
+      enum: [
+        "beekeeper",
+        "processor",
+        "distributor",
+        "retailer",
+        "admin",
+      ],
     },
-    phone: { type: String },
+
+    phone: {
+      type: String,
+      trim: true,
+    },
+
     location: {
-      state: { type: String },
-      district: { type: String },
+      state: {
+        type: String,
+        trim: true,
+      },
+      district: {
+        type: String,
+        trim: true,
+      },
     },
+
     status: {
       type: String,
       enum: ["active", "suspended"],
       default: "active",
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
 // Hash password before saving
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("passwordHash")) return next();
+userSchema.pre("save", async function () {
+  if (!this.isModified("passwordHash")) {
+    return;
+  }
+
   this.passwordHash = await bcrypt.hash(this.passwordHash, 10);
-  next();
 });
 
-// Compare password method
+// Compare entered password with stored hash
 userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.passwordHash);
+  return bcrypt.compare(enteredPassword, this.passwordHash);
 };
 
 module.exports = mongoose.model("User", userSchema);
+
+

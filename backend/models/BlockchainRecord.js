@@ -1,16 +1,16 @@
 const mongoose = require("mongoose");
 
-// Matches schema section 11 exactly
 const blockchainRecordSchema = new mongoose.Schema(
   {
     batchId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "HoneyBatch",
       required: true,
+      index: true,
     },
+
     transactionType: {
       type: String,
-      required: true,
       enum: [
         "batch_created",
         "processing_updated",
@@ -20,22 +20,50 @@ const blockchainRecordSchema = new mongoose.Schema(
         "certificate_added",
         "batch_delivered",
       ],
+      required: true,
     },
-    transactionHash: { type: String, required: true, unique: true },
-    blockNumber: { type: Number },
-    dataHash: { type: String, required: true }, // IPFS CID
-    blockchainNetwork: { type: String, default: "Sepolia Testnet" },
-    timestamp: { type: Date, default: Date.now },
+
+    transactionHash: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    blockNumber: {
+      type: Number,
+    },
+
+    dataHash: {
+      type: String,
+    },
+
+    blockchainNetwork: {
+      type: String,
+      default: "Sepolia Testnet",
+    },
+
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
+
     status: {
       type: String,
       enum: ["pending", "confirmed", "failed"],
-      default: "confirmed",
+      default: "pending",
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-blockchainRecordSchema.index({ batchId: 1 });
-blockchainRecordSchema.index({ transactionHash: 1 }, { unique: true });
+blockchainRecordSchema.index({
+  batchId: 1,
+  timestamp: -1,
+});
 
-module.exports = mongoose.model("BlockchainRecord", blockchainRecordSchema);
+module.exports = mongoose.model(
+  "BlockchainRecord",
+  blockchainRecordSchema
+);

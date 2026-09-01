@@ -1,39 +1,87 @@
 const mongoose = require("mongoose");
 
-const locationLogSchema = new mongoose.Schema({
-  batchId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "HoneyBatch",
-    required: true,
-  },
-  updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
-  actorRole: {
-    type: String,
-    required: true,
-    enum: ["distributor", "processor", "retailer"],
-  },
-  location: {
-    latitude: { type: Number },
-    longitude: { type: Number },
-    city: { type: String },
-    state: { type: String },
-  },
-  eventType: {
-    type: String,
-    required: true,
-    enum: ["picked_up", "in_transit", "arrived"],
-  },
-  timestamp: { type: Date, default: Date.now },
+const qualityCertificateSchema = new mongoose.Schema(
+  {
+    batchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "HoneyBatch",
+      required: [true, "Batch ID is required"],
+      index: true,
+    },
 
-  // Blockchain reference
-  locationCID: { type: String },
-  txHash: { type: String },
+    certificateId: {
+      type: String,
+      required: [true, "Certificate ID is required"],
+      unique: true,
+      trim: true,
+    },
+
+    testDate: {
+      type: Date,
+      required: [true, "Test date is required"],
+    },
+
+    labName: {
+      type: String,
+      required: [true, "Laboratory name is required"],
+      trim: true,
+    },
+
+    moisture: {
+      type: Number,
+      min: 0,
+    },
+
+    purity: {
+      type: Number,
+      min: 0,
+      max: 100,
+    },
+
+    adulterationStatus: {
+      type: String,
+      enum: ["not_detected", "detected", "inconclusive"],
+      required: true,
+    },
+
+    result: {
+      type: String,
+      enum: ["pass", "fail", "pending"],
+      default: "pending",
+    },
+
+    status: {
+      type: String,
+      enum: ["verified", "unverified", "rejected"],
+      default: "unverified",
+    },
+
+    verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+
+    certificateUrl: {
+      type: String,
+      trim: true,
+    },
+
+    remarks: {
+      type: String,
+      trim: true,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+qualityCertificateSchema.index({
+  batchId: 1,
+  testDate: -1,
 });
 
-locationLogSchema.index({ batchId: 1, timestamp: -1 });
-
-module.exports = mongoose.model("LocationLog", locationLogSchema);
+module.exports = mongoose.model(
+  "QualityCertificate",
+  qualityCertificateSchema
+);
