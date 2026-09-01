@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const {
-  registerHive,
+  createHive,
   getMyHives,
   addSensorReading,
   getSensorReadings,
@@ -16,7 +16,7 @@ router.post(
   "/",
   protect,
   authorize("beekeeper"),
-  registerHive
+  createHive
 );
 
 router.get(

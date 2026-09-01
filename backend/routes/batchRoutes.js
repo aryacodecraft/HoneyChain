@@ -10,8 +10,8 @@ const {
   flagBatch,
   addLocationLog,
   markDelivered,
-  getBatchQR
-} = require("../controllers/batchController");
+  getBatchQR,
+} = require("../controllers/BatchController");
 
 const { protect, authorize } = require("../middleware/auth");
 
@@ -27,14 +27,14 @@ router.post(
   createBatch
 );
 
+// IMPORTANT: /my MUST come before /:id
 // Get beekeeper's batches
 router.get(
-  "/",
+  "/my",
   protect,
   authorize("beekeeper"),
   getMyBatches
 );
-
 
 // Get batch QR code
 router.get(
